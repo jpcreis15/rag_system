@@ -1,3 +1,6 @@
 .env
 data/*
+!data/.gitkeep
 buffer/*
+!buffer/.gitkeep
+*.mp3

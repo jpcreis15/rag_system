@@ -44,16 +44,22 @@ def generate(state: State):
 
 prompt = hub.pull("rlm/rag-prompt")
 
-llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key)
-embeddings = OpenAIEmbeddings(model="text-embedding-3-large", api_key=api_key)
-vector_store = InMemoryVectorStore(embeddings)
+llm_model = "gpt-4o-mini"
+llm_embeddings = "text-embedding-3-large"
 TOP_K = 4
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 
+llm = ChatOpenAI(model=llm_model, api_key=api_key)
+embeddings = OpenAIEmbeddings(model=llm_embeddings, api_key=api_key)
+vector_store = InMemoryVectorStore(embeddings)
+client = OpenAI(api_key=api_key)
+
 ## OCR
 import fitz
 from PIL import Image
+
+buffer_docs = "buffer/docs.pkl"
 
 #######################################################################
 # Remove footers and headers
@@ -195,40 +201,58 @@ def response_generator():
 
 def main():
 
-    buffer_docs = "buffer/docs.pkl"
+    with st.expander("RAG Parameters:"):
+        st.write(f"**LLM**: {llm_model}")
+        st.write(f"**Embeddings Model**: {llm_embeddings}")
+        st.write(f"**Top K Search**: {TOP_K}")
+        st.write(f"**Chunk Size**: {CHUNK_SIZE}")
+        st.write(f"**Overlap**: {CHUNK_OVERLAP}")
 
+    # Checkbox linked to session state
+    st.checkbox("Voice enabled", key="show_voice")
+
+    ## Streamlit Session state
     if 'temp_answer' not in st.session_state.keys():
         st.session_state.temp_answer = ''
+    if "show_voice" not in st.session_state:
+        st.session_state.show_voice = False
+    if "indexing" not in st.session_state:
+        st.session_state.indexing = False
+    if "graph" not in st.session_state:
+        st.session_state.graph = None
 
-    with st.spinner("Loading data and indexing..."):
-        ################################################
-        ## Chunking
-        docs = load_from_pickle(buffer_docs)
-        
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
+    if not st.session_state.indexing:
+        with st.spinner("Loading data and indexing..."):
+            ################################################
+            ## Chunking
+            docs = load_from_pickle(buffer_docs)
+            
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=CHUNK_SIZE,  # chunk size (characters)
-            chunk_overlap=CHUNK_OVERLAP,  # chunk overlap (characters)
-            add_start_index=True,  # track index in original document
-        )
-        all_splits = text_splitter.split_documents(docs)
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=CHUNK_SIZE,  # chunk size (characters)
+                chunk_overlap=CHUNK_OVERLAP,  # chunk overlap (characters)
+                add_start_index=True,  # track index in original document
+            )
+            all_splits = text_splitter.split_documents(docs)
 
-        st.info(f"Split documents into {len(all_splits)} sub-documents.")
-        # st.write(str(all_splits))
+            st.info(f"Split documents into {len(all_splits)} sub-documents.")
+            # st.write(str(all_splits))
 
-        ## Indexing
-        document_ids = vector_store.add_documents(documents=all_splits)
-        print(document_ids[:3])
+            ## Indexing
+            document_ids = vector_store.add_documents(documents=all_splits)
+            print(document_ids[:3])
 
-        # ################################################
-        ## Retrieval and Generation
-        graph_builder = StateGraph(State).add_sequence([retrieve, generate])
-        graph_builder.add_edge(START, "retrieve")
-        graph = graph_builder.compile()
+            # ################################################
+            ## Retrieval and Generation
+            graph_builder = StateGraph(State).add_sequence([retrieve, generate])
+            graph_builder.add_edge(START, "retrieve")
+            st.session_state.graph = graph_builder.compile()
+
+            st.session_state.indexing = True
 
     ## Init chat
-    st.title("Tutai Bot")
+    st.title("Tutai Bot - Write and Speak!")
 
     # Initialize chat history
     if "messages" not in st.session_state:
@@ -252,7 +276,7 @@ def main():
         # Display assistant response in chat message container
         with st.chat_message("assistant"):
             with st.spinner(""):
-                response = graph.invoke({"question": prompt})
+                response = st.session_state.graph.invoke({"question": prompt})
             
             st.session_state.temp_answer = str(response['answer'])
             resp = st.write_stream(response_generator())
@@ -266,16 +290,50 @@ def main():
             # Add assistant response to chat history
             st.session_state.messages.append({"role": "assistant", "content": st.session_state.temp_answer})
 
-    # prompt = "What are the names of the authors?"
-    # st.write(f"Question: {prompt}\n\n")
+    ## if voice is enabled
+    if st.session_state.show_voice:
+        if audio_value :=st.audio_input("Record a voice message"):
+            ###################################################
+            ## Create transcript
+            with st.spinner("Speech to Text task..."):
+                prompt = stt_util(audio_value)
 
-    # with st.spinner("Retrieving and Generating answer..."):
-    #     result = graph.invoke({"question": prompt})
-        
-    #     st.write(f"Answer: {result['answer']}")
-    #     st.write(f"Context: {result['context']}\n\n")
+            ################
+            ## write prompt
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            # Add user message to chat history
+            st.session_state.messages.append({"role": "user", "content": prompt})
 
+            ###################################################
+            ## Generating answer
+            with st.spinner("Generating text answer..."):
+                response = st.session_state.graph.invoke({"question": prompt})
 
+            ###################################################
+            ## Generating answer
+            with st.spinner("Text to Speech..."):
+                answer_file = tts_util(response['answer'])
+
+            # st.audio(answer_file)
+            autoplay_audio(answer_file)
+
+            ###################################################
+            # Display assistant response in chat message container
+            with st.chat_message("assistant"):
+                st.session_state.temp_answer = str(response['answer'])
+                resp = st.write_stream(response_generator())
+
+                with st.expander("Sources"):
+                    for d in response['context']:
+                        st.write(f"**{d.metadata['source']}**")
+                        st.markdown(d.page_content)
+                        st.divider()
+                        
+                # Add assistant response to chat history
+                st.session_state.messages.append({"role": "assistant", "content": st.session_state.temp_answer})
+
+            
         
 if __name__ == '__main__':
     main()
