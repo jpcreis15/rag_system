@@ -4,3 +4,7 @@ data/*
 buffer/*
 !buffer/.gitkeep
 *.mp3
+
+.vscode
+.deepeval
+__pycache__

@@ -7,6 +7,7 @@ import re
 import pickle
 import time
 import json
+import pandas as pd
 
 load_dotenv(dotenv_path=".env", override=True)
 api_key = os.getenv("OPENAI_API_KEY")
@@ -26,6 +27,17 @@ from langchain_core.documents import Document
 from typing_extensions import List, TypedDict, Tuple
 from langgraph.graph import START, StateGraph
 
+## Metrics
+import evaluate as ev
+from deepeval import evaluate
+from deepeval.metrics import GEval
+from deepeval.test_case import LLMTestCaseParams, LLMTestCase
+
+# Load metrics
+rouge = ev.load("rouge")
+meteor = ev.load("meteor")
+
+
 class State(TypedDict):
     question: str
     context: List[Document]
@@ -44,7 +56,7 @@ def generate(state: State):
 
 prompt = hub.pull("rlm/rag-prompt")
 
-llm_model = "gpt-4o-mini"
+llm_model = "gpt-4.1-mini"
 llm_embeddings = "text-embedding-3-large"
 TOP_K = 5
 CHUNK_SIZE=5000
@@ -208,20 +220,20 @@ def main():
         st.write(f"**Chunk Size**: {CHUNK_SIZE}")
         st.write(f"**Overlap**: {CHUNK_OVERLAP}")
 
-    # Checkbox linked to session state
-    st.checkbox("Voice enabled", key="show_voice")
-
     ## Streamlit Session state
     if 'temp_answer' not in st.session_state.keys():
         st.session_state.temp_answer = ''
-    if "show_voice" not in st.session_state:
-        st.session_state.show_voice = False
     if "indexing" not in st.session_state:
         st.session_state.indexing = False
     if "graph" not in st.session_state:
         st.session_state.graph = None
-
-    if not st.session_state.indexing:
+    if "gt_data" not in st.session_state:
+        st.session_state.gt_data = None
+    if "all_responses" not in st.session_state:
+        st.session_state.all_responses = None
+    
+    index_button = st.button("Index and Vector Store document")
+    if not st.session_state.indexing and index_button:
         with st.spinner("Loading data and indexing..."):
             ################################################
             ## Chunking
@@ -252,88 +264,144 @@ def main():
             st.session_state.indexing = True
 
     ## Init chat
-    st.title("Tutai Bot - Write and Speak!")
+    st.title("Tutai Evaluation Bot!")
 
-    # Initialize chat history
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-        st.session_state.messages.append({"role": "assistant", "content": "Hi there! How can I help you today?"})
+    # st.write("All metrics available")
+    # st.write(evaluate.list_evaluation_modules())
 
-    # Display chat messages from history on app rerun
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # File uploader
+    # File uploader
+    uploaded_file = st.file_uploader("Upload a Q&A JSON file", type=["json"])
 
-    ####################################################
-    # React to user input
-    if prompt := st.chat_input("How can I help?"):
-        # Display user message in chat message container
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        # Add user message to chat history
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        
-        # Display assistant response in chat message container
-        with st.chat_message("assistant"):
-            with st.spinner(""):
+    if uploaded_file is not None:
+        try:
+            # Load the JSON file
+            st.session_state.gt_data = json.load(uploaded_file)
+
+            # Convert to DataFrame for better display
+            df = pd.DataFrame(st.session_state.gt_data)
+            questions = [item["question"] for item in st.session_state.gt_data]
+            references = [item["answer"] for item in st.session_state.gt_data]
+
+            # Show the table
+            st.subheader("Questions and Answers")
+            st.dataframe(df, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Error loading JSON: {e}")
+    else:
+        st.info("Please upload a JSON file containing questions and answers.")
+
+    ## Generate answers
+    if st.button("Generate responses"):
+        st.session_state.all_responses = []
+
+        for prompt in questions:
+            with st.spinner(f"Evaluating: {prompt[:50]}..."):
                 response = st.session_state.graph.invoke({"question": prompt})
+                answer = response.get("answer", "") if isinstance(response, dict) else str(response)
+                st.session_state.all_responses.append(answer)
+
+    ## Display generated responses
+    if st.session_state.all_responses is not None:
+        # Build DataFrame
+        df = pd.DataFrame({
+            "Question": questions,
+            "Ground Truth": references,
+            "LLM Answer": st.session_state.all_responses
+        })
+
+        st.subheader("Generated Responses")
+        st.dataframe(df, use_container_width=True)
+
+    ## Evaluation
+    if st.button("Evaluate with Statistics"):
+
+        # Compute metrics
+        rouge_result = [
+            rouge.compute(predictions=[pred], references=[ref])
+            for pred, ref in zip(st.session_state.all_responses, references)
+        ]
+        rouge_1_scores = [r["rouge1"] for r in rouge_result]
+        rouge_2_scores = [r["rouge2"] for r in rouge_result]
+
+        meteor_scores = [
+            meteor.compute(predictions=[pred], references=[ref])["meteor"]
+            for pred, ref in zip(st.session_state.all_responses, references)
+        ]
+
+        # Build DataFrame
+        df = pd.DataFrame({
+            "Question": questions,
+            "Ground Truth": references,
+            "LLM Answer": st.session_state.all_responses,
+            "ROUGE-1": rouge_1_scores,
+            "ROUGE-2": rouge_2_scores,
+            "METEOR": meteor_scores
+        })
+
+        st.subheader("Evaluation Results")
+        st.dataframe(df, use_container_width=True)
+
+        st.markdown("### 🔍 Evaluation Summary")
+        st.write(f"**Average ROUGE-1**: {sum(rouge_1_scores)/len(rouge_1_scores):.4f}")
+        st.write(f"**Average ROUGE-2**: {sum(rouge_2_scores)/len(rouge_2_scores):.4f}")
+        st.write(f"**Average METEOR**: {sum(meteor_scores)/len(meteor_scores):.4f}")
+
+    if st.button("Evaluate with LLMs"):
+
+        correctness_metric_temp = GEval(
+            name="Correctness",
+            criteria="Determine whether the actual output is factually correct based on the expected output.",
+            # NOTE: you can only provide either criteria or evaluation_steps, and not both
+            # evaluation_steps=[
+            #     "Check whether the facts in 'actual output' contradicts any facts in 'expected output'",
+            #     "You should also heavily penalize omission of detail",
+            #     "Vague language, or contradicting OPINIONS, are OK"
+            # ],
+            evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
+        )
+
+        results = []
+        with st.spinner("LLM Evaluation...."):
             
-            st.session_state.temp_answer = str(response['answer'])
-            resp = st.write_stream(response_generator())
+            ## all
+            all_test_cases = [LLMTestCase(input=ques, actual_output=pred, expected_output=ref) for pred, ref, ques in zip(st.session_state.all_responses, references, questions)]
+            all_results = evaluate(test_cases=all_test_cases, metrics=[correctness_metric_temp])
+            # st.write(all_results)
 
-            with st.expander("Sources"):
-                for d in response['context']:
-                    st.write(f"**{d.metadata['source']}**")
-                    st.markdown(d.page_content)
-                    st.divider()
-                    
-            # Add assistant response to chat history
-            st.session_state.messages.append({"role": "assistant", "content": st.session_state.temp_answer})
+            all_scores = [a.metrics_data[0].score for a in all_results.test_results]
 
-    ## if voice is enabled
-    if st.session_state.show_voice:
-        if audio_value :=st.audio_input("Record a voice message"):
-            ###################################################
-            ## Create transcript
-            with st.spinner("Speech to Text task..."):
-                prompt = stt_util(audio_value)
+            df = pd.DataFrame({
+                "Question": [a.input for a in all_results.test_results],
+                "Ground Truth": [a.expected_output for a in all_results.test_results],
+                "LLM Answer": [a.actual_output for a in all_results.test_results],
+                "Success": [a.metrics_data[0].success for a in all_results.test_results],
+                "Score": all_scores,
+                "Reason": [a.metrics_data[0].reason for a in all_results.test_results]
+            })
 
-            ################
-            ## write prompt
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.subheader("LLM Evaluation")
+            st.dataframe(df, use_container_width=True)
 
-            ###################################################
-            ## Generating answer
-            with st.spinner("Generating text answer..."):
-                response = st.session_state.graph.invoke({"question": prompt})
-
-            ###################################################
-            ## Generating answer
-            with st.spinner("Text to Speech..."):
-                answer_file = tts_util(response['answer'])
-
-            # st.audio(answer_file)
-            autoplay_audio(answer_file)
-
-            ###################################################
-            # Display assistant response in chat message container
-            with st.chat_message("assistant"):
-                st.session_state.temp_answer = str(response['answer'])
-                resp = st.write_stream(response_generator())
-
-                with st.expander("Sources"):
-                    for d in response['context']:
-                        st.write(f"**{d.metadata['source']}**")
-                        st.markdown(d.page_content)
-                        st.divider()
-                        
-                # Add assistant response to chat history
-                st.session_state.messages.append({"role": "assistant", "content": st.session_state.temp_answer})
-
+            st.markdown("### 🔍 Evaluation Summary")
+            st.write(f"**Average Score**: {sum(all_scores)/len(all_scores):.4f}")
             
+            # ## each
+            # for pred, ref, ques in zip(st.session_state.all_responses, references, questions):
+            #     test_case = LLMTestCase(
+            #         input=ques,
+            #         actual_output=pred,
+            #         expected_output=ref
+            #     )
+
+            #     temp_eval = evaluate(test_cases=[test_case], metrics=[correctness_metric_temp])
+            #     st.write(temp_eval.test_results[0].metrics_data[0].success)
+
+            #     results.append(temp_eval)
+
+            # st.write(results)
         
+
 if __name__ == '__main__':
     main()
