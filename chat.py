@@ -221,7 +221,8 @@ def main():
     if "graph" not in st.session_state:
         st.session_state.graph = None
 
-    if not st.session_state.indexing:
+    index_button = st.button("Index and Vector Store document")
+    if not st.session_state.indexing and index_button:
         with st.spinner("Loading data and indexing..."):
             ################################################
             ## Chunking

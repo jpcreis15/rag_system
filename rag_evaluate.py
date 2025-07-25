@@ -294,62 +294,88 @@ def main():
 
     ## Generate answers
     if st.button("Generate responses"):
-        st.session_state.all_responses = []
+        try:
+            st.session_state.all_responses = []
 
-        for prompt in questions:
-            with st.spinner(f"Evaluating: {prompt[:50]}..."):
-                response = st.session_state.graph.invoke({"question": prompt})
-                answer = response.get("answer", "") if isinstance(response, dict) else str(response)
-                st.session_state.all_responses.append(answer)
+            for prompt in questions:
+                with st.spinner(f"Generating answer for: {prompt[:50]}..."):
+                    response = st.session_state.graph.invoke({"question": prompt})
+                    answer = response.get("answer", "") if isinstance(response, dict) else str(response)
+                    st.session_state.all_responses.append(answer)
+
+        except Exception as e:
+            st.markdown("""
+                        Ups, something went wrong. 
+                     
+                     Perhaps you forgot to:
+                     1. Click 'Index and Vector Store document', or; 
+                     2. Upload the tests document.""")
 
     ## Display generated responses
     if st.session_state.all_responses is not None:
-        # Build DataFrame
-        df = pd.DataFrame({
-            "Question": questions,
-            "Ground Truth": references,
-            "LLM Answer": st.session_state.all_responses
-        })
+        if len(st.session_state.all_responses) > 0:
+            # Build DataFrame
+            df = pd.DataFrame({
+                "Question": questions,
+                "Ground Truth": references,
+                "LLM Answer": st.session_state.all_responses
+            })
 
-        st.subheader("Generated Responses")
-        st.dataframe(df, use_container_width=True)
+            st.subheader("Generated Responses")
+            st.dataframe(df, use_container_width=True)
 
+    st.divider()
+    st.header("Evaluation options")
+    col1, col2 = st.columns(2)
+    with col1:
+        button_stats = st.button("Evaluate with Statistics")
+    with col2:
+        button_llm = st.button("Evaluate with LLM")
+    
     ## Evaluation
-    if st.button("Evaluate with Statistics"):
+    if button_stats:
+        try:
+            with st.spinner("Evaluating with Statistics..."):
+                # Compute metrics
+                rouge_result = [
+                    rouge.compute(predictions=[pred], references=[ref])
+                    for pred, ref in zip(st.session_state.all_responses, references)
+                ]
+                rouge_1_scores = [r["rouge1"] for r in rouge_result]
+                rouge_2_scores = [r["rouge2"] for r in rouge_result]
 
-        # Compute metrics
-        rouge_result = [
-            rouge.compute(predictions=[pred], references=[ref])
-            for pred, ref in zip(st.session_state.all_responses, references)
-        ]
-        rouge_1_scores = [r["rouge1"] for r in rouge_result]
-        rouge_2_scores = [r["rouge2"] for r in rouge_result]
+                meteor_scores = [
+                    meteor.compute(predictions=[pred], references=[ref])["meteor"]
+                    for pred, ref in zip(st.session_state.all_responses, references)
+                ]
 
-        meteor_scores = [
-            meteor.compute(predictions=[pred], references=[ref])["meteor"]
-            for pred, ref in zip(st.session_state.all_responses, references)
-        ]
+            # Build DataFrame
+            df = pd.DataFrame({
+                "Question": questions,
+                "Ground Truth": references,
+                "LLM Answer": st.session_state.all_responses,
+                "ROUGE-1": rouge_1_scores,
+                "ROUGE-2": rouge_2_scores,
+                "METEOR": meteor_scores
+            })
 
-        # Build DataFrame
-        df = pd.DataFrame({
-            "Question": questions,
-            "Ground Truth": references,
-            "LLM Answer": st.session_state.all_responses,
-            "ROUGE-1": rouge_1_scores,
-            "ROUGE-2": rouge_2_scores,
-            "METEOR": meteor_scores
-        })
+            st.subheader("Evaluation Results")
+            st.dataframe(df, use_container_width=True)
 
-        st.subheader("Evaluation Results")
-        st.dataframe(df, use_container_width=True)
+            st.markdown("### 🔍 Evaluation Summary")
+            st.write(f"**Average ROUGE-1**: {sum(rouge_1_scores)/len(rouge_1_scores):.4f}")
+            st.write(f"**Average ROUGE-2**: {sum(rouge_2_scores)/len(rouge_2_scores):.4f}")
+            st.write(f"**Average METEOR**: {sum(meteor_scores)/len(meteor_scores):.4f}")
+        except Exception as e:
+            st.markdown("""
+                        Ups, something went wrong. 
+                     
+                     Perhaps you forgot to:
+                     1. Click 'Index and Vector Store document', or; 
+                     2. Upload the tests document, or; 
+                     3. Generate the RAG system answers by clicking 'Generate responses'.""")
 
-        st.markdown("### 🔍 Evaluation Summary")
-        st.write(f"**Average ROUGE-1**: {sum(rouge_1_scores)/len(rouge_1_scores):.4f}")
-        st.write(f"**Average ROUGE-2**: {sum(rouge_2_scores)/len(rouge_2_scores):.4f}")
-        st.write(f"**Average METEOR**: {sum(meteor_scores)/len(meteor_scores):.4f}")
-
-    if st.button("Evaluate with LLMs"):
-
+    if button_llm:
         correctness_metric_temp = GEval(
             name="Correctness",
             criteria="Determine whether the actual output is factually correct based on the expected output.",
@@ -363,45 +389,53 @@ def main():
         )
 
         results = []
-        with st.spinner("LLM Evaluation...."):
-            
-            ## all
-            all_test_cases = [LLMTestCase(input=ques, actual_output=pred, expected_output=ref) for pred, ref, ques in zip(st.session_state.all_responses, references, questions)]
-            all_results = evaluate(test_cases=all_test_cases, metrics=[correctness_metric_temp])
-            # st.write(all_results)
+        try:
+            with st.spinner("LLM Evaluation...."):
+                
+                ## all
+                all_test_cases = [LLMTestCase(input=ques, actual_output=pred, expected_output=ref) for pred, ref, ques in zip(st.session_state.all_responses, references, questions)]
+                all_results = evaluate(test_cases=all_test_cases, metrics=[correctness_metric_temp])
+                # st.write(all_results)
 
-            all_scores = [a.metrics_data[0].score for a in all_results.test_results]
+                all_scores = [a.metrics_data[0].score for a in all_results.test_results]
 
-            df = pd.DataFrame({
-                "Question": [a.input for a in all_results.test_results],
-                "Ground Truth": [a.expected_output for a in all_results.test_results],
-                "LLM Answer": [a.actual_output for a in all_results.test_results],
-                "Success": [a.metrics_data[0].success for a in all_results.test_results],
-                "Score": all_scores,
-                "Reason": [a.metrics_data[0].reason for a in all_results.test_results]
-            })
+                df = pd.DataFrame({
+                    "Question": [a.input for a in all_results.test_results],
+                    "Ground Truth": [a.expected_output for a in all_results.test_results],
+                    "LLM Answer": [a.actual_output for a in all_results.test_results],
+                    "Success": [a.metrics_data[0].success for a in all_results.test_results],
+                    "Score": all_scores,
+                    "Reason": [a.metrics_data[0].reason for a in all_results.test_results]
+                })
 
-            st.subheader("LLM Evaluation")
-            st.dataframe(df, use_container_width=True)
+                st.subheader("LLM Evaluation")
+                st.dataframe(df, use_container_width=True)
 
-            st.markdown("### 🔍 Evaluation Summary")
-            st.write(f"**Average Score**: {sum(all_scores)/len(all_scores):.4f}")
-            
-            # ## each
-            # for pred, ref, ques in zip(st.session_state.all_responses, references, questions):
-            #     test_case = LLMTestCase(
-            #         input=ques,
-            #         actual_output=pred,
-            #         expected_output=ref
-            #     )
+                st.markdown("### 🔍 Evaluation Summary")
+                st.write(f"**Average Score**: {sum(all_scores)/len(all_scores):.4f}")
+                
+                # ## each
+                # for pred, ref, ques in zip(st.session_state.all_responses, references, questions):
+                #     test_case = LLMTestCase(
+                #         input=ques,
+                #         actual_output=pred,
+                #         expected_output=ref
+                #     )
 
-            #     temp_eval = evaluate(test_cases=[test_case], metrics=[correctness_metric_temp])
-            #     st.write(temp_eval.test_results[0].metrics_data[0].success)
+                #     temp_eval = evaluate(test_cases=[test_case], metrics=[correctness_metric_temp])
+                #     st.write(temp_eval.test_results[0].metrics_data[0].success)
 
-            #     results.append(temp_eval)
+                #     results.append(temp_eval)
 
-            # st.write(results)
-        
+                # st.write(results)
+        except Exception as e:
+            st.markdown("""
+                        Ups, something went wrong. 
+                     
+                     Perhaps you forgot to:
+                     1. Click 'Index and Vector Store document', or; 
+                     2. Upload the tests document, or; 
+                     3. Generate the RAG system answers by clicking 'Generate responses'.""")
 
 if __name__ == '__main__':
     main()

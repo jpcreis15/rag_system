@@ -1,0 +1,42 @@
+[
+  {
+    "question": "What is the main purpose of integrating K-means clustering with Cosine and Jaccard similarity methods in the MRO process?",
+    "answer": "To define a reliable prediction interval that improves maintenance time predictions, enhances accuracy, and reduces planning errors in aircraft engine MRO."
+  },
+  {
+    "question": "Why is predictive accuracy important in the aircraft engine MRO process?",
+    "answer": "Predictive accuracy is essential for optimizing operational efficiency, reducing costs, minimizing errors, and improving maintenance task planning."
+  },
+  {
+    "question": "What are the three main components of the proposed methodology?",
+    "answer": "The three components are ML Prediction, Clustering, and Similarity."
+  },
+  {
+    "question": "What challenge does the methodology address in using machine learning for MRO predictions?",
+    "answer": "It addresses data issues such as incompleteness, imbalance, and inconsistency that affect the reliability of ML predictions."
+  },
+  {
+    "question": "How is the Jaccard method used in this study?",
+    "answer": "It is used to measure the similarity between maintenance tasks by evaluating the overlap of tasks in different maintenance processes."
+  },
+  {
+    "question": "What role does the Cosine similarity play in the methodology?",
+    "answer": "It assesses the similarity of processing times for maintenance tasks between different maintenance processes."
+  },
+  {
+    "question": "What did the experimental validation show regarding prediction intervals?",
+    "answer": "Prediction intervals significantly reduced the absolute error and percentage deviation, improving prediction reliability and accuracy."
+  },
+  {
+    "question": "What was the outcome of applying the elbow method in the clustering process?",
+    "answer": "It identified that the optimal number of clusters was between 3 and 4, corresponding to light, medium, and heavy maintenance categories."
+  },
+  {
+    "question": "How were weights assigned in the mixed similarity calculation?",
+    "answer": "A weight of 0.7 was assigned to the Jaccard similarity and 0.3 to the Cosine similarity to emphasize task similarity."
+  },
+  {
+    "question": "What operational benefit did the company report from using the proposed prediction methodology?",
+    "answer": "Improved reliability of Turnaround Time (TAT) predictions, which supports better customer satisfaction and resource planning."
+  }
+]
