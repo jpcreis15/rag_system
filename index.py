@@ -195,7 +195,7 @@ def call_index():
     try:
         os.remove(file_path)
     except Exception as e:
-        st.error(f"Error deleting file: {e}")
+        pass
 
     ################################################
     # Get list of PDF files
@@ -231,10 +231,15 @@ def call_index():
                 metadata={"source": f"Page {i+1}"}
             )
 
-        # Use ThreadPoolExecutor to parallelize
-        with st.spinner(f"{pdf_path} - Converting {len(base64_images)} images to text..."):
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                results = list(executor.map(process_image, enumerate(base64_images)))
+        try:
+            # Use ThreadPoolExecutor to parallelize
+            with st.spinner(f"{pdf_path} - Converting {len(base64_images)} images to text..."):
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    results = list(executor.map(process_image, enumerate(base64_images)))
+
+            st.info("Successful translation and store.")
+        except Exception as e:
+            st.error(f"Something went wrong while trying to convert from PDF to Markdown. {e}")
 
         # Collect documents
         docs = list(results)

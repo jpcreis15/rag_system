@@ -6,3 +6,6 @@ run_index:
 
 run_chat:
 	streamlit run chat.py
+
+run_eval:
+	streamlit run rag_evaluate.py

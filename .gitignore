@@ -1,3 +1,11 @@
 .env
 data/*
+!data/.gitkeep
+!data/*.json
 buffer/*
+!buffer/.gitkeep
+*.mp3
+
+.vscode
+.deepeval
+__pycache__
