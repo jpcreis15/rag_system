@@ -242,7 +242,7 @@ def call_index():
             st.error(f"Something went wrong while trying to convert from PDF to Markdown. {e}")
 
         # Collect documents
-        docs = list(results)
+        docs.extend(list(results))
 
     ################################################
     ## Save data temporarily - Might be replaced by DB

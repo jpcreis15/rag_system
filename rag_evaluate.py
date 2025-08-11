@@ -56,11 +56,21 @@ def generate(state: State):
 
 prompt = hub.pull("rlm/rag-prompt")
 
+prompt.messages[0].prompt.template = """
+You are an expert in aircraft engine maintenance, repair, and overhaul (MRO) processes, machine learning, and predictive analytics. You provide accurate, technical responses based on research findings.
+Question: {question} 
+Context: {context} 
+Answer:
+"""
+
+# st.write(prompt.messages[0].prompt.template)
+
 llm_model = "gpt-4.1-mini"
+# llm_model = "ft:gpt-4.1-mini-2025-04-14:personal:clustering-paper:Byhehg4s"
 llm_embeddings = "text-embedding-3-large"
 TOP_K = 5
-CHUNK_SIZE=5000
-CHUNK_OVERLAP=2000
+CHUNK_SIZE=7000
+CHUNK_OVERLAP=4500
 
 llm = ChatOpenAI(model=llm_model, api_key=api_key)
 embeddings = OpenAIEmbeddings(model=llm_embeddings, api_key=api_key)
@@ -271,7 +281,7 @@ def main():
 
     # File uploader
     # File uploader
-    uploaded_file = st.file_uploader("Upload a Q&A JSON file", type=["json"])
+    uploaded_file = st.file_uploader("Upload a Test Q&A JSON file", type=["json"])
 
     if uploaded_file is not None:
         try:
